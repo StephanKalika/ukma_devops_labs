@@ -1,0 +1,13 @@
+[tool.poetry]
+name = "naukma"
+package-mode=false
+version = "0.1.0"
+
+[tool.poetry.dependencies]
+python = "3.12.3"
+pulumi = "3.154.0"
+aws_pulumi = "6.72.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,3.0.0"]
+build-backend = "poetry.core.masonry.api"
