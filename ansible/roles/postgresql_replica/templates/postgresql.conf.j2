@@ -1,0 +1,28 @@
+# roles/postgresql_replica/templates/postgresql.conf.j2
+# PostgreSQL configuration file for replica server
+listen_addresses = '*'
+port = {{ postgresql_port | int + 1 }}
+
+# Replication settings
+wal_level = replica
+max_wal_senders = 10
+wal_keep_size = 64
+max_replication_slots = 10
+hot_standby = on
+hot_standby_feedback = on
+
+# Connection settings
+primary_conninfo = 'host={{ master_ip }} port={{ postgresql_port }} user={{ replication_user }} password={{ replication_password }} application_name=replica'
+primary_slot_name = 'replica_slot'
+
+# General settings
+datestyle = 'iso, mdy'
+timezone = 'UTC'
+lc_messages = 'en_US.UTF-8'
+lc_monetary = 'en_US.UTF-8'
+lc_numeric = 'en_US.UTF-8'
+lc_time = 'en_US.UTF-8'
+
+# Performance tuning (adjust as needed)
+shared_buffers = 128MB
+dynamic_shared_memory_type = posix
