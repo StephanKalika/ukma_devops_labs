@@ -1,0 +1,53 @@
+---
+# roles/postgresql_master/tasks/main.yml
+- name: Configure PostgreSQL for replication
+  template:
+    src: postgresql.conf.j2
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
+    owner: postgres
+    group: postgres
+    mode: '0644'
+  notify: restart postgresql
+
+- name: Configure pg_hba.conf for replication
+  template:
+    src: pg_hba.conf.j2
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: '0640'
+  notify: restart postgresql
+
+- name: Create replication user
+  become_user: postgres
+  postgresql_user:
+    name: "{{ replication_user }}"
+    password: "{{ replication_password }}"
+    role_attr_flags: LOGIN,REPLICATION
+    state: present
+
+- name: Create test database
+  become_user: postgres
+  postgresql_db:
+    name: "{{ database_name }}"
+    encoding: "{{ postgresql_encoding }}"
+    lc_collate: "{{ postgresql_locale }}"
+    lc_ctype: "{{ postgresql_locale }}"
+    state: present
+
+- name: Create sample table in the test database
+  become_user: postgres
+  postgresql_query:
+    db: "{{ database_name }}"
+    query: |
+      CREATE TABLE IF NOT EXISTS test_table (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO test_table (name) VALUES ('Sample data') ON CONFLICT DO NOTHING;
+
+- name: Force PostgreSQL restart
+  service:
+    name: postgresql
+    state: restarted

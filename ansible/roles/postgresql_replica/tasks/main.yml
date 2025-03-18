@@ -1,0 +1,68 @@
+---
+# roles/postgresql_replica/tasks/main.yml
+- name: Stop PostgreSQL service
+  service:
+    name: postgresql
+    state: stopped
+
+- name: Create additional PostgreSQL cluster
+  command: "pg_createcluster {{ postgresql_version }} replica -p {{ postgresql_port | int + 1 }}"
+  args:
+    creates: "/etc/postgresql/{{ postgresql_version }}/replica"
+
+- name: Remove default data directory
+  file:
+    path: "/var/lib/postgresql/{{ postgresql_version }}/replica"
+    state: absent
+
+- name: Create base backup from master
+  become_user: postgres
+  shell: >
+    pg_basebackup -h {{ master_ip }} -p {{ postgresql_port }} -U {{ replication_user }} 
+    -D /var/lib/postgresql/{{ postgresql_version }}/replica -Fp -Xs -P -R 
+    -C -S replica_slot
+  environment:
+    PGPASSWORD: "{{ replication_password }}"
+  args:
+    creates: "/var/lib/postgresql/{{ postgresql_version }}/replica/PG_VERSION"
+
+- name: Configure PostgreSQL replica recovery.conf
+  template:
+    src: "recovery.conf.j2"
+    dest: "/var/lib/postgresql/{{ postgresql_version }}/replica/recovery.signal"
+    owner: postgres
+    group: postgres
+    mode: '0600'
+
+- name: Configure PostgreSQL replica postgresql.conf
+  template:
+    src: "postgresql.conf.j2"
+    dest: "/etc/postgresql/{{ postgresql_version }}/replica/postgresql.conf"
+    owner: postgres
+    group: postgres
+    mode: '0644'
+
+- name: Configure PostgreSQL replica pg_hba.conf
+  template:
+    src: "pg_hba.conf.j2"
+    dest: "/etc/postgresql/{{ postgresql_version }}/replica/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: '0640'
+
+- name: Start PostgreSQL replica cluster
+  service:
+    name: "postgresql@{{ postgresql_version }}-replica"
+    state: started
+    enabled: yes
+
+- name: Verify replication status
+  become_user: postgres
+  shell: >
+    psql -p {{ postgresql_port | int + 1 }} -c "SELECT pg_is_in_recovery();"
+  register: replication_status
+  changed_when: false
+
+- name: Display replication status
+  debug:
+    var: replication_status.stdout_lines
