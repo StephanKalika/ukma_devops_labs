@@ -1,6 +1,0 @@
----
-# roles/postgresql_replica/handlers/main.yml
-- name: restart postgresql replica
-  service:
-    name: "postgresql@{{ postgresql_version }}-replica"
-    state: restarted

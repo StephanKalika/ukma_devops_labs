@@ -1,14 +1,10 @@
-# roles/postgresql_master/templates/pg_hba.conf.j2
-# PostgreSQL Client Authentication Configuration File
+# roles/postgres_master/templates/pg_hba.conf.j2
 # TYPE  DATABASE        USER            ADDRESS                 METHOD
-# "local" is for Unix domain socket connections only
 local   all             postgres                                peer
 local   all             all                                     peer
-# IPv4 local connections:
 host    all             all             127.0.0.1/32            scram-sha-256
-# IPv6 local connections:
 host    all             all             ::1/128                 scram-sha-256
+
 # Allow replication connections
-host    replication     {{ replication_user }}   {{ replica_ip }}/32        scram-sha-256
-host    replication     {{ replication_user }}   127.0.0.1/32              scram-sha-256
-host    all             all             {{ replica_ip }}/32                scram-sha-256
+host    replication     {{ replication_user }}  0.0.0.0/0       scram-sha-256
+host    all             all                     0.0.0.0/0       scram-sha-256

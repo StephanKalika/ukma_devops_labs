@@ -1,0 +1,26 @@
+---
+- name: Configure PostgreSQL Master Server
+  hosts: postgres_master
+  become: yes
+  vars:
+    postgresql_version: 16
+    database_name: students_db
+    replication_user: replicator
+    replication_password: secure_repl_password
+  roles:
+    - role: postgres_common
+    - role: postgres_master
+
+- name: Configure PostgreSQL Replica Server
+  hosts: postgres_replica
+  become: yes
+  vars:
+    postgresql_version: 16
+    master_ip: "{{ hostvars['pg_master']['ansible_host'] }}"
+    replication_user: replicator
+    replication_password: secure_repl_password
+    cluster_name: replica_cluster
+    port: 5433
+  roles:
+    - role: postgres_common
+    - role: postgres_replica

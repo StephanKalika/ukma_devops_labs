@@ -1,68 +1,86 @@
+# roles/postgres_replica/tasks/main.yml
 ---
-# roles/postgresql_replica/tasks/main.yml
-- name: Stop PostgreSQL service
+- name: Create new PostgreSQL cluster
+  command: >
+    pg_createcluster {{ postgresql_version }} {{ cluster_name }} 
+    -p {{ port }} -d /var/lib/postgresql/{{ postgresql_version }}/{{ cluster_name }}
+  register: createcluster_result
+  failed_when: createcluster_result.rc != 0 and "already exists" not in createcluster_result.stderr
+  changed_when: createcluster_result.rc == 0
+
+- name: Stop PostgreSQL replica cluster
   service:
-    name: postgresql
+    name: "postgresql@{{ postgresql_version }}-{{ cluster_name }}"
     state: stopped
+  ignore_errors: yes
 
-- name: Create additional PostgreSQL cluster
-  command: "pg_createcluster {{ postgresql_version }} replica -p {{ postgresql_port | int + 1 }}"
-  args:
-    creates: "/etc/postgresql/{{ postgresql_version }}/replica"
-
-- name: Remove default data directory
+- name: Clear replica data directory
   file:
-    path: "/var/lib/postgresql/{{ postgresql_version }}/replica"
+    path: "/var/lib/postgresql/{{ postgresql_version }}/{{ cluster_name }}"
     state: absent
+  when: createcluster_result.rc == 0 or "already exists" in createcluster_result.stderr
 
-- name: Create base backup from master
+- name: Create replica data directory
+  file:
+    path: "/var/lib/postgresql/{{ postgresql_version }}/{{ cluster_name }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: 0700
+
+- name: Create recovery signal file
+  file:
+    path: "/var/lib/postgresql/{{ postgresql_version }}/{{ cluster_name }}/standby.signal"
+    state: touch
+    owner: postgres
+    group: postgres
+    mode: 0600
+
+- name: Take base backup from master server
   become_user: postgres
   shell: >
-    pg_basebackup -h {{ master_ip }} -p {{ postgresql_port }} -U {{ replication_user }} 
-    -D /var/lib/postgresql/{{ postgresql_version }}/replica -Fp -Xs -P -R 
-    -C -S replica_slot
-  environment:
-    PGPASSWORD: "{{ replication_password }}"
-  args:
-    creates: "/var/lib/postgresql/{{ postgresql_version }}/replica/PG_VERSION"
+    PGPASSWORD="{{ replication_password }}" pg_basebackup -h {{ master_ip }} -U {{ replication_user }} 
+    -D /var/lib/postgresql/{{ postgresql_version }}/{{ cluster_name }} 
+    -X stream -P -v -R -S replica_slot
+  register: basebackup_result
+  failed_when: basebackup_result.rc != 0
+  changed_when: basebackup_result.rc == 0
 
-- name: Configure PostgreSQL replica recovery.conf
+- name: Configure PostgreSQL replica
   template:
-    src: "recovery.conf.j2"
-    dest: "/var/lib/postgresql/{{ postgresql_version }}/replica/recovery.signal"
+    src: postgresql.conf.replica.j2
+    dest: "/etc/postgresql/{{ postgresql_version }}/{{ cluster_name }}/postgresql.conf"
     owner: postgres
     group: postgres
-    mode: '0600'
+    mode: 0644
 
-- name: Configure PostgreSQL replica postgresql.conf
+- name: Configure recovery settings
   template:
-    src: "postgresql.conf.j2"
-    dest: "/etc/postgresql/{{ postgresql_version }}/replica/postgresql.conf"
+    src: postgresql.auto.conf.j2
+    dest: "/var/lib/postgresql/{{ postgresql_version }}/{{ cluster_name }}/postgresql.auto.conf"
     owner: postgres
     group: postgres
-    mode: '0644'
-
-- name: Configure PostgreSQL replica pg_hba.conf
-  template:
-    src: "pg_hba.conf.j2"
-    dest: "/etc/postgresql/{{ postgresql_version }}/replica/pg_hba.conf"
-    owner: postgres
-    group: postgres
-    mode: '0640'
+    mode: 0600
 
 - name: Start PostgreSQL replica cluster
   service:
-    name: "postgresql@{{ postgresql_version }}-replica"
+    name: "postgresql@{{ postgresql_version }}-{{ cluster_name }}"
     state: started
     enabled: yes
 
-- name: Verify replication status
+- name: Wait for PostgreSQL replica to start
+  wait_for:
+    port: "{{ port }}"
+    state: started
+    timeout: 30
+
+- name: Check replication status
   become_user: postgres
   shell: >
-    psql -p {{ postgresql_port | int + 1 }} -c "SELECT pg_is_in_recovery();"
+    PGPORT={{ port }} psql -c "SELECT pg_is_in_recovery();"
   register: replication_status
   changed_when: false
 
 - name: Display replication status
   debug:
-    var: replication_status.stdout_lines
+    msg: "Replication status: {{ replication_status.stdout }}"

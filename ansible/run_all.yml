@@ -1,0 +1,16 @@
+---
+# run_all.yml
+- name: Generate Inventory from Terraform state
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Run inventory generator script
+      script: terraform_inventory.py
+      register: inventory_result
+      
+    - name: Display inventory generator output
+      debug:
+        msg: "{{ inventory_result.stdout_lines }}"
+
+- name: Import PostgreSQL configuration playbook
+  import_playbook: main.yml

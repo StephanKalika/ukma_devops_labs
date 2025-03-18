@@ -1,0 +1,5 @@
+# roles/postgres_replica/templates/postgresql.auto.conf.j2
+# Recovery settings
+primary_conninfo = 'host={{ master_ip }} port=5432 user={{ replication_user }} password={{ replication_password }} application_name=replica_node'
+primary_slot_name = 'replica_slot'
+recovery_target_timeline = 'latest'
