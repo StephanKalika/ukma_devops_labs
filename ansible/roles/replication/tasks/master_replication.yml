@@ -1,0 +1,41 @@
+---
+- name: Check if PostgreSQL is accessible
+  become_user: postgres
+  command: psql -c "SELECT version();"
+  register: pg_version_check
+  changed_when: false
+  failed_when: false
+
+- name: Display PostgreSQL version
+  debug:
+    var: pg_version_check.stdout_lines
+  when: pg_version_check.rc == 0
+
+- name: Ensure PostgreSQL is running and accessible
+  service:
+    name: postgresql
+    state: restarted
+  when: pg_version_check.rc != 0
+
+- name: Create replication user
+  become_user: postgres
+  postgresql_user:
+    name: "{{ postgres_replication_user }}"
+    password: "{{ postgres_replication_password }}"
+    role_attr_flags: LOGIN,REPLICATION
+    state: present
+
+- name: Ensure replication user has access to the database
+  become_user: postgres
+  postgresql_privs:
+    db: "{{ postgres_db_name }}"
+    role: "{{ postgres_replication_user }}"
+    type: database
+    privs: ALL
+    state: present
+
+- name: Create replication slot
+  become_user: postgres
+  postgresql_query:
+    db: postgres
+    query: "SELECT pg_create_physical_replication_slot('replica_slot') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'replica_slot')"

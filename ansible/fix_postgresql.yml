@@ -1,0 +1,284 @@
+---
+- name: Fix PostgreSQL Cluster Issues
+  hosts: postgresql_servers
+  become: yes
+  vars:
+    postgres_version: 16
+    postgres_db_name: students
+    postgres_replication_user: replicator
+    postgres_replication_password: secure_password123
+    postgres_master_ip: "{{ hostvars['pg_master']['ansible_host'] }}"
+  
+  tasks:
+    # Check current state
+    - name: Check PostgreSQL installation status
+      command: dpkg-query -W -f='${Status}' postgresql-{{ postgres_version }}
+      register: pkg_status
+      failed_when: false
+      changed_when: false
+
+    - name: Display PostgreSQL installation status
+      debug:
+        var: pkg_status.stdout
+
+    # Complete removal of PostgreSQL if needed
+    - name: Stop PostgreSQL service
+      service:
+        name: postgresql
+        state: stopped
+      ignore_errors: yes
+
+    - name: Remove PostgreSQL clusters
+      shell: |
+        if command -v pg_dropcluster > /dev/null; then
+          pg_lsclusters | grep -v Ver | awk '{print $1, $2}' | while read ver cluster; do
+            pg_dropcluster --stop $ver $cluster
+          done
+        fi
+      ignore_errors: yes
+
+    - name: Purge PostgreSQL packages
+      apt:
+        name:
+          - postgresql*
+          - pgdg-keyring
+        state: absent
+        purge: yes
+      ignore_errors: yes
+
+    - name: Remove PostgreSQL directories
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - /etc/postgresql/
+        - /var/lib/postgresql/
+        - /var/run/postgresql/
+        - /etc/apt/sources.list.d/pgdg.list
+        - /etc/apt/keyrings/postgresql.gpg
+      ignore_errors: yes
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+      ignore_errors: yes
+
+    # Reinstall PostgreSQL properly
+    - name: Install PostgreSQL prerequisites
+      apt:
+        name:
+          - gnupg2
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - python3-psycopg2
+        state: present
+
+    - name: Download PostgreSQL GPG key
+      get_url:
+        url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        dest: /tmp/postgresql-ACCC4CF8.asc
+        mode: '0644'
+
+    - name: Create apt keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Import PostgreSQL GPG key
+      shell: |
+        gpg --dearmor < /tmp/postgresql-ACCC4CF8.asc > /etc/apt/keyrings/postgresql.gpg
+      args:
+        creates: /etc/apt/keyrings/postgresql.gpg
+
+    - name: Add PostgreSQL repository
+      shell: |
+        echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+        apt-get update
+      args:
+        creates: /etc/apt/sources.list.d/pgdg.list
+
+    - name: Install PostgreSQL
+      apt:
+        name: 
+          - postgresql-{{ postgres_version }}
+          - postgresql-client-{{ postgres_version }}
+          - postgresql-contrib-{{ postgres_version }}
+        state: present
+        update_cache: yes
+
+    - name: Ensure PostgreSQL directories exist with proper permissions
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: '0700'
+      with_items:
+        - /var/lib/postgresql/{{ postgres_version }}/main
+        - /var/run/postgresql
+
+    # Create PostgreSQL cluster if needed
+    - name: Check if PostgreSQL cluster exists
+      command: pg_lsclusters
+      register: pg_clusters
+      changed_when: false
+      failed_when: false
+
+    - name: Display PostgreSQL clusters
+      debug:
+        var: pg_clusters.stdout_lines
+
+    - name: Create PostgreSQL cluster if needed
+      command: pg_createcluster {{ postgres_version }} main --start
+      when: pg_clusters.stdout is not defined or pg_clusters.stdout == ""
+      ignore_errors: yes
+
+    - name: Start PostgreSQL service
+      service:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: Wait for PostgreSQL to be ready
+      wait_for:
+        path: /var/run/postgresql/.s.PGSQL.5432
+        timeout: 30
+      ignore_errors: yes
+
+    # Configure master server
+    - name: Configure master server
+      block:
+        - name: Configure PostgreSQL for replication (master)
+          template:
+            src: postgresql.conf.master.j2
+            dest: /etc/postgresql/{{ postgres_version }}/main/postgresql.conf
+            owner: postgres
+            group: postgres
+            mode: 0644
+          notify: Restart PostgreSQL
+
+        - name: Configure pg_hba.conf for replication
+          template:
+            src: pg_hba.conf.j2
+            dest: /etc/postgresql/{{ postgres_version }}/main/pg_hba.conf
+            owner: postgres
+            group: postgres
+            mode: 0640
+          notify: Restart PostgreSQL
+
+        - name: Create students database
+          become_user: postgres
+          postgresql_db:
+            name: "{{ postgres_db_name }}"
+            state: present
+          ignore_errors: yes
+
+        - name: Create replication user
+          become_user: postgres
+          postgresql_user:
+            name: "{{ postgres_replication_user }}"
+            password: "{{ postgres_replication_password }}"
+            role_attr_flags: LOGIN,REPLICATION
+            state: present
+          ignore_errors: yes
+
+        - name: Create replication slot
+          become_user: postgres
+          postgresql_query:
+            db: postgres
+            query: "SELECT pg_create_physical_replication_slot('replica_slot') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'replica_slot')"
+          ignore_errors: yes
+      when: inventory_hostname in groups['postgres_master']
+
+    # Configure replica server
+    - name: Configure replica server
+      block:
+        - name: Stop PostgreSQL on replica
+          service:
+            name: postgresql
+            state: stopped
+
+        - name: Create additional PostgreSQL cluster for replication
+          command: pg_createcluster {{ postgres_version }} replica
+          args:
+            creates: /etc/postgresql/{{ postgres_version }}/replica
+          ignore_errors: yes
+
+        - name: Configure PostgreSQL for replication (replica)
+          template:
+            src: postgresql.conf.replica.j2
+            dest: /etc/postgresql/{{ postgres_version }}/replica/postgresql.conf
+            owner: postgres
+            group: postgres
+            mode: 0644
+          ignore_errors: yes
+
+        - name: Configure pg_hba.conf for replica
+          template:
+            src: pg_hba.conf.j2
+            dest: /etc/postgresql/{{ postgres_version }}/replica/pg_hba.conf
+            owner: postgres
+            group: postgres
+            mode: 0640
+          ignore_errors: yes
+
+        - name: Create standby.signal file
+          file:
+            path: /etc/postgresql/{{ postgres_version }}/replica/standby.signal
+            state: touch
+            owner: postgres
+            group: postgres
+            mode: 0640
+          ignore_errors: yes
+
+        - name: Configure recovery parameters
+          template:
+            src: postgresql.auto.conf.j2
+            dest: /etc/postgresql/{{ postgres_version }}/replica/postgresql.auto.conf
+            owner: postgres
+            group: postgres
+            mode: 0640
+          ignore_errors: yes
+
+        - name: Remove old data directory
+          file:
+            path: /var/lib/postgresql/{{ postgres_version }}/replica
+            state: absent
+          ignore_errors: yes
+
+        - name: Create empty data directory
+          file:
+            path: /var/lib/postgresql/{{ postgres_version }}/replica
+            state: directory
+            owner: postgres
+            group: postgres
+            mode: 0700
+
+        - name: Take base backup from master
+          become_user: postgres
+          shell: |
+            pg_basebackup -h {{ postgres_master_ip }} -p 5432 -U {{ postgres_replication_user }} \
+            -D /var/lib/postgresql/{{ postgres_version }}/replica \
+            -P -v -R -X stream -S replica_slot \
+            -C -W
+          environment:
+            PGPASSWORD: "{{ postgres_replication_password }}"
+          args:
+            executable: /bin/bash
+          ignore_errors: yes
+
+        - name: Start PostgreSQL replica cluster
+          service:
+            name: postgresql@{{ postgres_version }}-replica
+            state: started
+            enabled: yes
+          ignore_errors: yes
+      when: inventory_hostname in groups['postgres_replica']
+
+  handlers:
+    - name: Restart PostgreSQL
+      service:
+        name: postgresql
+        state: restarted

@@ -1,0 +1,57 @@
+---
+- name: Download PostgreSQL GPG key
+  get_url:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    dest: /tmp/postgresql-ACCC4CF8.asc
+    mode: '0644'
+
+- name: Create apt keyrings directory
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Import PostgreSQL GPG key for Ubuntu 24.04
+  shell: |
+    gpg --dearmor < /tmp/postgresql-ACCC4CF8.asc > /etc/apt/keyrings/postgresql.gpg
+  args:
+    creates: /etc/apt/keyrings/postgresql.gpg
+
+- name: Add PostgreSQL repository for Ubuntu 24.04
+  apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
+    state: present
+    update_cache: yes
+  ignore_errors: yes
+
+- name: Add PostgreSQL repository (fallback method)
+  shell: |
+    echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+    apt-get update
+  args:
+    creates: /etc/apt/sources.list.d/pgdg.list
+  when: ansible_distribution_version is version('24.04', '>=')
+  ignore_errors: yes
+
+- name: Install PostgreSQL
+  apt:
+    name: 
+      - postgresql-{{ postgres_version }}
+      - postgresql-client-{{ postgres_version }}
+      - postgresql-contrib-{{ postgres_version }}
+    state: present
+    update_cache: yes
+
+- name: Ensure PostgreSQL service is running
+  service:
+    name: postgresql
+    state: started
+    enabled: yes
+
+- name: Include master-specific tasks
+  include_tasks: master.yml
+  when: inventory_hostname in groups['postgres_master']
+
+- name: Include replica-specific tasks
+  include_tasks: replica.yml
+  when: inventory_hostname in groups['postgres_replica']

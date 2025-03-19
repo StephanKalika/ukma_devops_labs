@@ -1,26 +1,44 @@
 ---
-- name: Configure PostgreSQL Master Server
-  hosts: postgres_master
+- name: Set up PostgreSQL servers with replication
+  hosts: postgresql_servers
   become: yes
   vars:
-    postgresql_version: 16
-    database_name: students_db
-    replication_user: replicator
-    replication_password: secure_repl_password
+    postgres_version: 16
+    postgres_db_name: students
+    postgres_replication_user: replicator
+    postgres_replication_password: secure_password123
+    postgres_master_ip: "{{ hostvars['pg_master']['ansible_host'] }}"
+  
+  pre_tasks:
+    - name: Ensure SSH connectivity
+      wait_for_connection:
+        timeout: 30
+      
+    - name: Check if PostgreSQL is already installed
+      command: dpkg-query -W -f='${Status}' postgresql-{{ postgres_version }}
+      register: pkg_status
+      failed_when: false
+      changed_when: false
+  
   roles:
-    - role: postgres_common
-    - role: postgres_master
+    - common
+    - postgresql
+    - replication
 
-- name: Configure PostgreSQL Replica Server
-  hosts: postgres_replica
-  become: yes
-  vars:
-    postgresql_version: 16
-    master_ip: "{{ hostvars['pg_master']['ansible_host'] }}"
-    replication_user: replicator
-    replication_password: secure_repl_password
-    cluster_name: replica_cluster
-    port: 5433
-  roles:
-    - role: postgres_common
-    - role: postgres_replica
+  post_tasks:
+    - name: Check replication status
+      become_user: postgres
+      shell: |
+        if [ "{{ inventory_hostname }}" = "pg_master" ]; then
+          psql -c "SELECT * FROM pg_stat_replication;"
+        else
+          psql -c "SELECT status FROM pg_stat_wal_receiver;"
+        fi
+      register: replication_status
+      changed_when: false
+      ignore_errors: yes
+      
+    - name: Display replication status
+      debug:
+        var: replication_status.stdout_lines
+      when: replication_status is defined and replication_status.rc == 0

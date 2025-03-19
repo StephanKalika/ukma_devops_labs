@@ -1,0 +1,8 @@
+# Basic PostgreSQL configuration for replica server
+listen_addresses = '*'
+port = 5432
+max_connections = 100
+
+# Replication settings
+hot_standby = on
+hot_standby_feedback = on

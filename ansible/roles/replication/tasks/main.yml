@@ -1,0 +1,8 @@
+---
+- name: Include master replication setup
+  include_tasks: master_replication.yml
+  when: inventory_hostname in groups['postgres_master']
+
+- name: Include replica replication setup
+  include_tasks: replica_replication.yml
+  when: inventory_hostname in groups['postgres_replica']

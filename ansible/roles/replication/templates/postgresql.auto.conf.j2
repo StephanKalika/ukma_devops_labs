@@ -1,0 +1,4 @@
+# PostgreSQL auto.conf for PostgreSQL >= 12
+primary_conninfo = 'host={{ postgres_master_ip }} port=5432 user={{ postgres_replication_user }} password={{ postgres_replication_password }} application_name=replica'
+primary_slot_name = 'replica_slot'
+recovery_target_timeline = 'latest'

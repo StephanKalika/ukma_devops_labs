@@ -1,0 +1,29 @@
+---
+- name: Stop PostgreSQL on replica
+  service:
+    name: postgresql
+    state: stopped
+
+- name: Create additional PostgreSQL cluster for replication
+  command: pg_createcluster {{ postgres_version }} replica
+  args:
+    creates: /etc/postgresql/{{ postgres_version }}/replica
+  register: create_cluster
+
+- name: Configure PostgreSQL for replication (replica)
+  template:
+    src: postgresql.conf.replica.j2
+    dest: /etc/postgresql/{{ postgres_version }}/replica/postgresql.conf
+    owner: postgres
+    group: postgres
+    mode: 0644
+  when: create_cluster.changed
+
+- name: Configure pg_hba.conf for replica
+  template:
+    src: pg_hba.conf.j2
+    dest: /etc/postgresql/{{ postgres_version }}/replica/pg_hba.conf
+    owner: postgres
+    group: postgres
+    mode: 0640
+  when: create_cluster.changed

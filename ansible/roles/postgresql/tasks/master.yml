@@ -1,0 +1,131 @@
+---
+# Check PostgreSQL status and fix if needed
+- name: Check if PostgreSQL is running
+  command: systemctl status postgresql
+  register: postgres_status
+  changed_when: false
+  failed_when: false
+
+- name: Display PostgreSQL status
+  debug:
+    var: postgres_status.stdout_lines
+  when: postgres_status.rc == 0
+
+- name: Check PostgreSQL socket directory
+  stat:
+    path: /var/run/postgresql
+  register: socket_dir
+
+- name: Create PostgreSQL socket directory if missing
+  file:
+    path: /var/run/postgresql
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0755'
+  when: not socket_dir.stat.exists
+
+- name: Restart PostgreSQL service
+  service:
+    name: postgresql
+    state: restarted
+  when: postgres_status.rc != 0 or not socket_dir.stat.exists
+
+- name: Wait for PostgreSQL to be ready
+  wait_for:
+    path: /var/run/postgresql/.s.PGSQL.5432
+    timeout: 30
+  register: socket_wait
+  ignore_errors: yes
+
+- name: Check PostgreSQL clusters
+  command: pg_lsclusters
+  register: pg_clusters
+  changed_when: false
+  when: socket_wait is failed
+
+- name: Display PostgreSQL clusters
+  debug:
+    var: pg_clusters.stdout_lines
+  when: socket_wait is failed
+
+- name: Start PostgreSQL cluster manually if needed
+  command: pg_ctlcluster {{ postgres_version }} main start
+  when: socket_wait is failed
+  ignore_errors: yes
+
+- name: Wait for PostgreSQL to be ready (retry)
+  wait_for:
+    path: /var/run/postgresql/.s.PGSQL.5432
+    timeout: 30
+  when: socket_wait is failed
+
+
+- name: Configure PostgreSQL for replication (master)
+  template:
+    src: postgresql.conf.master.j2
+    dest: /etc/postgresql/{{ postgres_version }}/main/postgresql.conf
+    owner: postgres
+    group: postgres
+    mode: 0644
+  notify: Restart PostgreSQL
+
+- name: Configure pg_hba.conf for replication
+  template:
+    src: pg_hba.conf.j2
+    dest: /etc/postgresql/{{ postgres_version }}/main/pg_hba.conf
+    owner: postgres
+    group: postgres
+    mode: 0640
+  notify: Restart PostgreSQL
+
+- name: Create students database
+  become_user: postgres
+  postgresql_db:
+    name: "{{ postgres_db_name }}"
+    state: present
+
+- name: Create sample tables in students database
+  become_user: postgres
+  postgresql_query:
+    db: "{{ postgres_db_name }}"
+    query: |
+      CREATE TABLE IF NOT EXISTS students (
+        id SERIAL PRIMARY KEY,
+        first_name VARCHAR(50),
+        last_name VARCHAR(50),
+        email VARCHAR(100),
+        enrollment_date DATE
+      );
+      
+      CREATE TABLE IF NOT EXISTS courses (
+        id SERIAL PRIMARY KEY,
+        course_name VARCHAR(100),
+        credits INTEGER
+      );
+      
+      CREATE TABLE IF NOT EXISTS enrollments (
+        id SERIAL PRIMARY KEY,
+        student_id INTEGER REFERENCES students(id),
+        course_id INTEGER REFERENCES courses(id),
+        grade VARCHAR(2)
+      );
+
+- name: Insert sample data
+  become_user: postgres
+  postgresql_query:
+    db: "{{ postgres_db_name }}"
+    query: |
+      INSERT INTO students (first_name, last_name, email, enrollment_date)
+      VALUES 
+        ('John', 'Doe', 'john.doe@example.com', '2023-09-01'),
+        ('Jane', 'Smith', 'jane.smith@example.com', '2023-09-01'),
+        ('Bob', 'Johnson', 'bob.johnson@example.com', '2023-09-01')
+      ON CONFLICT DO NOTHING;
+      
+      INSERT INTO courses (course_name, credits)
+      VALUES 
+        ('Introduction to Computer Science', 3),
+        ('Database Systems', 4),
+        ('Web Development', 3)
+      ON CONFLICT DO NOTHING;

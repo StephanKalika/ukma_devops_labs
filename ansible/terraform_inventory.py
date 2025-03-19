@@ -2,11 +2,17 @@
 import json
 import os
 import sys
+import subprocess
 
 def generate_inventory():
     try:
+        # Build paths
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        terraform_dir = os.path.join(script_dir, '..', 'terraform')
+        terraform_state_file = os.path.join(terraform_dir, 'terraform.tfstate')
+        
         # Read the Terraform state file
-        with open('terraform.tfstate', 'r') as f:
+        with open(terraform_state_file, 'r') as f:
             state = json.load(f)
         
         # Extract server IPs from the state
@@ -18,8 +24,28 @@ def generate_inventory():
             print("Error: Could not find server IPs in terraform state", file=sys.stderr)
             sys.exit(1)
         
-        # Generate inventory file content
-        inventory_content = f"""[postgres_servers]
+        # Get the private key from Terraform state
+        private_key = None
+        for resource in state.get('resources', []):
+            if resource.get('type') == 'tls_private_key' and resource.get('name') == 'my_key':
+                private_key = resource.get('instances', [])[0].get('attributes', {}).get('private_key_openssh')
+                break
+        
+        if not private_key:
+            print("Warning: Could not find private key in terraform state", file=sys.stderr)
+            print("Using default ~/.ssh/id_ed25519 key", file=sys.stderr)
+            key_path = "~/.ssh/id_ed25519"
+        else:
+            # Write the private key to a file
+            key_path = os.path.join(script_dir, 'terraform_private_key')
+            with open(key_path, 'w') as f:
+                f.write(private_key)
+            # Set correct permissions for SSH key
+            os.chmod(key_path, 0o600)
+            print(f"Private key written to {key_path}")
+        
+        # Generate inventory file content with corrected group names
+        inventory_content = f"""[postgresql_servers]
 pg_master ansible_host={server_1_ip} ansible_user=ubuntu
 pg_replica ansible_host={server_2_ip} ansible_user=ubuntu
 
@@ -29,16 +55,23 @@ pg_master
 [postgres_replica]
 pg_replica
 
-[all:vars]
-ansible_ssh_private_key_file=~/.ssh/id_ed25519
+[postgresql:children]
+postgres_master
+postgres_replica
+
+[postgresql:vars]
+ansible_ssh_private_key_file={key_path}
 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+ansible_python_interpreter=/usr/bin/python3
 """
         
         # Write to inventory file
-        with open('inventory.ini', 'w') as f:
+        inventory_path = os.path.join(script_dir, 'inventory.ini')
+        with open(inventory_path, 'w') as f:
             f.write(inventory_content)
         
-        print(f"Inventory file generated successfully with master: {server_1_ip}, replica: {server_2_ip}")
+        print(f"Inventory file generated successfully at {inventory_path}")
+        print(f"Master IP: {server_1_ip}, Replica IP: {server_2_ip}")
         
     except Exception as e:
         print(f"Error generating inventory: {str(e)}", file=sys.stderr)

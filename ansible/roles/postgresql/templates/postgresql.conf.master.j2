@@ -1,0 +1,17 @@
+# Basic PostgreSQL configuration for master server
+listen_addresses = '*'
+port = 5432
+max_connections = 100
+
+# Replication settings
+wal_level = replica
+max_wal_senders = 10
+wal_keep_size = '1GB'
+max_replication_slots = 10
+
+# Enable logical replication
+wal_sender_timeout = '60s'
+
+# Other performance settings
+shared_buffers = 128MB
+dynamic_shared_memory_type = posix
