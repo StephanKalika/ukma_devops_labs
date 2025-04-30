@@ -11,7 +11,7 @@ This repository contains a Docker Compose setup for monitoring a laptop or serve
 ## Setup Instructions
 
 1. Clone this repository:
-git clone https://github.com/StephanKalika/ukma_devops_labs.git cd monitoring-stack
+git clone https://github.com/StephanKalika/ukma_devops_labs.git cd monitoring
 
 2. Start the monitoring stack:
 docker-compose up -d
@@ -33,8 +33,23 @@ docker-compose up -d
 ## Dashboard
 
 The included dashboard provides:
-- CPU usage monitoring
-- Memory usage monitoring
-- Disk usage monitoring
-- Network traffic monitoring
-- System logs visualization
+
+### Key Metrics at a Glance
+- CPU usage monitoring with threshold indicators
+- Memory usage percentage with visual indicators
+- Disk usage percentage with visual indicators
+- CPU cores count
+
+### Detailed Resource Monitoring
+- Detailed CPU usage breakdown (system, user, IO wait)
+- Memory usage details (total, used, cached, free)
+- Disk space allocation and usage
+- Network traffic monitoring (receive and transmit)
+
+### System Information
+- System load averages (1m, 5m, 15m)
+- System uptime tracking
+- Network interfaces and filesystems count
+
+### Logs Visualization
+- System logs visualization with filtering capabilities
